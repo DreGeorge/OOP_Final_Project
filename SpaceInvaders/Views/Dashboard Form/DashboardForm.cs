@@ -1,4 +1,5 @@
-﻿using MySql.Data.MySqlClient;
+﻿// DashboardForm.cs
+using MySql.Data.MySqlClient;
 using SpaceInvaders.Data;
 using System;
 using System.Collections.Generic;
@@ -17,14 +18,12 @@ namespace SpaceInvaders
         private const string ADMIN_PASSWORD = "xtremeadmin";
         private bool isDeployed = false;
 
-        // ✅ XP progress block
         private Label lblXpNextTitle;
         private ProgressBar pbXpNext;
         private Label lblXpNextValue;
         private int currentXp = 0;
         private const int RankXpThreshold = 5000;
 
-        // ✅ Rank ladder (no DB)
         private readonly string[] RankNames =
         {
             "LIEUTENANT",
@@ -34,29 +33,24 @@ namespace SpaceInvaders
             "GENERAL"
         };
 
-        // ✅ Mission 4-hour countdown (no DB)
         private Label lblMissionCountdown;
         private System.Windows.Forms.Timer missionCountdownTimer;
         private int missionCooldownSeconds = 0;
-        private const int MissionCooldownTotalSeconds = 4 * 60 * 60; // 4 hours
+        private const int MissionCooldownTotalSeconds = 4 * 60 * 60;
 
-        // Leaderboard dynamic refs
         private readonly List<Panel> leaderboardSlots = new List<Panel>();
         private readonly List<Label> leaderboardLabels = new List<Label>();
         private Button btnViewLeaderboards;
 
-        // Achievements dynamic refs (page shows 3)
         private readonly List<Panel> achievementSlots = new List<Panel>();
         private readonly List<PictureBox> achievementIcons = new List<PictureBox>();
         private readonly List<Label> achievementTitles = new List<Label>();
         private readonly List<Label> achievementLocks = new List<Label>();
 
-        // Pagination controls
         private Button btnAchPrev;
         private Button btnAchNext;
         private Label lblAchPage;
 
-        // Achievements data (many)
         private List<Achievement> allAchievements = new List<Achievement>();
         private const int AchievementsPerPage = 3;
         private int achievementsPageIndex = 0;
@@ -113,7 +107,6 @@ namespace SpaceInvaders
             hudClockTimer = new System.Windows.Forms.Timer { Interval = 1000 };
             hudClockTimer.Tick += HudClockTimer_Tick;
 
-            // ✅ countdown timer
             missionCountdownTimer = new System.Windows.Forms.Timer { Interval = 1000 };
             missionCountdownTimer.Tick += MissionCountdownTimer_Tick;
         }
@@ -279,13 +272,36 @@ namespace SpaceInvaders
 
         private void PicAvatar_Click(object sender, EventArgs e)
         {
-            HudMessageBox.Show(
-                "Edit Profile screen not implemented yet.",
-                "COMING SOON",
-                HudMessageBoxButtons.OK,
-                HudMessageBoxIcon.Info,
-                this
-            );
+            var typeNames = new[]
+            {
+                "SpaceInvaders.EditProfileForm",
+                "AttendanceTracker.EditProfileForm"
+            };
+
+            var argsCandidates = new object[][]
+            {
+                new object[] { currentUserId, DbConfig.ConnectionString },
+                new object[] { currentUserId },
+                new object[] { }
+            };
+
+            bool opened = OpenFormByTypeNames(typeNames, argsCandidates);
+
+            if (!opened)
+            {
+                HudMessageBox.Show(
+                    "Edit Profile form not found in project.\nMake sure EditProfileForm exists in SpaceInvaders namespace.",
+                    "MISSING FORM",
+                    HudMessageBoxButtons.OK,
+                    HudMessageBoxIcon.Warning,
+                    this
+                );
+                return;
+            }
+
+            LoadUserProfileSafe();
+            SetupLeaderboardsPanel();
+            ApplyUI();
         }
 
         private void DashboardForm_Resize(object sender, EventArgs e)
@@ -948,13 +964,30 @@ namespace SpaceInvaders
 
         private void BtnViewLeaderboards_Click(object sender, EventArgs e)
         {
-            HudMessageBox.Show(
-                "Leaderboards screen not implemented yet.",
-                "COMING SOON",
-                HudMessageBoxButtons.OK,
-                HudMessageBoxIcon.Info,
-                this
-            );
+            var typeNames = new[]
+            {
+                "SpaceInvaders.LeaderboardsForm",
+                "AttendanceTracker.LeaderboardsForm"
+            };
+
+            var argsCandidates = new object[][]
+            {
+                new object[] { currentUserId },
+                new object[] { }
+            };
+
+            bool opened = OpenFormByTypeNames(typeNames, argsCandidates);
+
+            if (!opened)
+            {
+                HudMessageBox.Show(
+                    "Leaderboards form not found in project.\nMake sure LeaderboardsForm exists in SpaceInvaders namespace.",
+                    "MISSING FORM",
+                    HudMessageBoxButtons.OK,
+                    HudMessageBoxIcon.Warning,
+                    this
+                );
+            }
         }
 
         private string[] LoadLeaderboardLastNamesSafe()
@@ -1111,6 +1144,7 @@ namespace SpaceInvaders
                     if (inputBox.Text == ADMIN_PASSWORD)
                     {
                         prompt.Close();
+
                         HudMessageBox.Show(
                             "ADMIN MODE UNLOCKED.",
                             "ACCESS GRANTED",
@@ -1118,6 +1152,12 @@ namespace SpaceInvaders
                             HudMessageBoxIcon.Success,
                             this
                         );
+
+                        using (var admin = new AdminAccessForm())
+                        {
+                            admin.StartPosition = FormStartPosition.CenterParent;
+                            admin.ShowDialog(this);
+                        }
                     }
                     else
                     {
@@ -1175,12 +1215,67 @@ namespace SpaceInvaders
             );
         }
 
-        // =========================
-        // LOGOUT  ✅ NO CONFIRMATION NOW
-        // =========================
         private void BtnLogout_Click(object sender, EventArgs e)
         {
-            Close(); // immediate logout, no Yes/No prompt
+            Close();
+        }
+
+        private bool OpenFormByTypeNames(string[] fullyQualifiedTypeNames, object[][] argsCandidates)
+        {
+            Type t = null;
+
+            foreach (var name in fullyQualifiedTypeNames)
+            {
+                t = Type.GetType(name, throwOnError: false);
+                if (t != null) break;
+
+                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    try
+                    {
+                        t = asm.GetType(name, throwOnError: false);
+                        if (t != null) break;
+                    }
+                    catch { }
+                }
+
+                if (t != null) break;
+            }
+
+            if (t == null) return false;
+
+            Exception lastErr = null;
+
+            foreach (var args in argsCandidates)
+            {
+                try
+                {
+                    object obj = Activator.CreateInstance(t, args);
+                    if (obj is Form f)
+                    {
+                        f.StartPosition = FormStartPosition.CenterParent;
+                        f.ShowDialog(this);
+                        return true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastErr = ex;
+                }
+            }
+
+            if (lastErr != null)
+            {
+                HudMessageBox.Show(
+                    "Form exists but could not be opened.\nConstructor mismatch or runtime error:\n" + lastErr.Message,
+                    "OPEN FAILED",
+                    HudMessageBoxButtons.OK,
+                    HudMessageBoxIcon.Warning,
+                    this
+                );
+            }
+
+            return false;
         }
 
         protected override void OnPaintBackground(PaintEventArgs e)
